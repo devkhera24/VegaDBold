@@ -1,0 +1,57 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.cache/
+
+# Virtual environments
+venv/
+.env/
+env/
+.venv/
+
+# Bytecode + metadata
+*.egg-info/
+.eggs/
+
+# --- FastAPI / general server ---
+*.log
+*.pid
+
+# --- Build / distribution ---
+build/
+dist/
+
+# --- OS / Editor junk ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- ETL project specific ---
+uploaded_files/
+extracted/
+tmp/
+temp/
+cache/
+data/
+*.sqlite
+*.db
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Large ML model files ---
+models/
+checkpoints/
+*.pt
+*.bin
+*.onnx
+
+# --- Node (if frontend exists) ---
+node_modules/
+
+# --- Git itself ---
+.gitignore~

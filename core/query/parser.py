@@ -1,0 +1,256 @@
+# parser.py
+from typing import Any, Dict, Optional
+try:
+    from core.query.tokenizer import tokenize, Token
+except Exception:
+    try:
+        from tokenizer import tokenize, Token
+    except Exception:
+        raise
+
+
+class ParseError(Exception):
+    pass
+
+class TokenStream:
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.pos = 0
+
+    def peek(self) -> Optional[Token]:
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
+
+    def next(self) -> Optional[Token]:
+        t = self.peek()
+        if t:
+            self.pos += 1
+        return t
+
+    def expect(self, *types):
+        t = self.peek()
+        if not t:
+            raise ParseError(f"Expected {types} at EOF")
+        if t.type in types or t.value.upper() in types:
+            return self.next()
+        raise ParseError(f"Expected {types}, got {t.type}:{t.value} at {t.pos}")
+
+def parse(query: str) -> Dict[str, Any]:
+    tokens = tokenize(query)
+    ts = TokenStream(tokens)
+    return parse_command(ts)
+
+# --------------------------
+# COMMAND DISPATCH
+# --------------------------
+def parse_command(ts: TokenStream) -> Dict[str, Any]:
+    t = ts.peek()
+    if not t:
+        raise ParseError("empty query")
+
+    if t.value.upper() == "FIND":
+        ts.next()
+        nxt = ts.peek()
+        if nxt.value.upper() == "NODES":
+            ts.next()
+            return parse_find_nodes(ts)
+        if nxt.value.upper() == "PATH":
+            ts.next()
+            return parse_find_path(ts)
+        raise ParseError("Expected NODES or PATH after FIND")
+
+    if t.value.upper() == "GET":
+        ts.next()
+        return parse_get(ts)
+
+    if t.value.upper() == "SEARCH":
+        ts.next()
+        return parse_search_vector(ts)
+
+    raise ParseError(f"Unknown start token: {t.value}")
+
+# --------------------------
+# FIND NODES
+# --------------------------
+def parse_find_nodes(ts: TokenStream) -> Dict[str,Any]:
+    ast = {
+        "op": "find_nodes",
+        "return": ["*"],
+        "where": None,
+        "order_by": None,
+        "limit": None,
+        "offset": None
+    }
+
+    if ts.peek() and ts.peek().value.upper() == "RETURN":
+        ts.next()
+        ast["return"] = parse_fields(ts)
+
+    if ts.peek() and ts.peek().value.upper() == "WHERE":
+        ts.next()
+        ast["where"] = parse_expr(ts)
+
+    if ts.peek() and ts.peek().value.upper() == "ORDER":
+        ts.next()
+        ts.expect("BY")
+        field = parse_field(ts)
+        direction = "ASC"
+        if ts.peek() and ts.peek().value.upper() in ("ASC", "DESC"):
+            direction = ts.next().value.upper()
+        ast["order_by"] = {"field": field, "dir": direction}
+
+    while ts.peek() and ts.peek().value.upper() in ("LIMIT","OFFSET"):
+        kw = ts.next().value.upper()
+        num = int(float(ts.expect("NUMBER").value))
+        if kw == "LIMIT":
+            ast["limit"] = num
+        else:
+            ast["offset"] = num
+
+    return ast
+
+# --------------------------
+# GET NODE / GET VECTOR
+# --------------------------
+def parse_get(ts: TokenStream):
+    t = ts.expect("KW")
+    if t.value.upper() == "NODE":
+        key = ts.expect("IDENT").value
+        if key != "node_id":
+            raise ParseError("GET NODE expects node_id=...")
+        ts.expect("OP")
+        val = ts.expect("STRING").value.strip('"')
+        ast = {"op":"get_node","node_id":val,"properties":None}
+        if ts.peek() and ts.peek().value.upper() == "PROPERTIES":
+            ts.next()
+            ast["properties"] = parse_fields(ts)
+        return ast
+
+    if t.value.upper() == "VECTOR":
+        key = ts.expect("IDENT").value
+        if key != "node_id":
+            raise ParseError("GET VECTOR expects node_id=...")
+        ts.expect("OP")
+        val = ts.expect("STRING").value.strip('"')
+        return {"op":"get_vector","node_id":val}
+
+    raise ParseError("GET must be NODE or VECTOR")
+
+# --------------------------
+# SEARCH VECTOR
+# --------------------------
+def parse_search_vector(ts: TokenStream):
+    ts.expect("KW")  # VECTOR
+    ast = {"op":"search_vector","embed":None,"node_id":None,"k":10,"filter":None}
+
+    # EMBED("...")
+    if ts.peek() and ts.peek().value.upper() == "EMBED":
+        ts.next()
+        ts.expect("LPAREN")
+        text = ts.expect("STRING").value.strip('"')
+        ts.expect("RPAREN")
+        ast["embed"] = text
+    else:
+        key = ts.expect("IDENT").value
+        if key != "node_id":
+            raise ParseError("SEARCH VECTOR expects EMBED(...) or node_id=...")
+        ts.expect("OP")
+        ast["node_id"] = ts.expect("STRING").value.strip('"')
+
+    if ts.peek() and ts.peek().value.upper() == "K":
+        ts.next()
+        ast["k"] = int(float(ts.expect("NUMBER").value))
+
+    if ts.peek() and ts.peek().value.upper() == "FILTER":
+        ts.next()
+        ast["filter"] = parse_expr(ts)
+
+    return ast
+
+# --------------------------
+# FIND PATH
+# --------------------------
+def parse_find_path(ts: TokenStream):
+    ts.expect("KW")  # FROM
+    f = parse_node_spec(ts)
+
+    ts.expect("KW")  # TO
+    t = parse_node_spec(ts)
+
+    ast = {"op":"find_path","from":f,"to":t,"maxhops":None,"directed":None,"return":"nodes"}
+
+    while ts.peek() and ts.peek().value.upper() in ("MAXHOPS","DIRECTED","UNDIRECTED","RETURN"):
+        kw = ts.next().value.upper()
+        if kw == "MAXHOPS":
+            ast["maxhops"] = int(float(ts.expect("NUMBER").value))
+        elif kw in ("DIRECTED","UNDIRECTED"):
+            ast["directed"] = (kw == "DIRECTED")
+        elif kw == "RETURN":
+            ret = ts.expect("IDENT").value
+            ast["return"] = ret.lower()
+
+    return ast
+
+def parse_node_spec(ts: TokenStream):
+    key = ts.expect("IDENT").value
+    if key not in ("node_id", "label"):
+        raise ParseError("Expected node_id=... or label=...")
+    ts.expect("OP")
+    return {key: ts.expect("STRING").value.strip('"')}
+
+# --------------------------
+# FILTERS / EXPRESSIONS
+# --------------------------
+def parse_fields(ts: TokenStream):
+    out = [parse_field(ts)]
+    while ts.peek() and ts.peek().type == "COMMA":
+        ts.next()
+        out.append(parse_field(ts))
+    return out
+
+def parse_field(ts: TokenStream):
+    return ts.expect("IDENT").value
+
+def parse_expr(ts: TokenStream):
+    left = parse_term(ts)
+    while ts.peek() and ts.peek().value.upper() in ("AND","OR"):
+        op = ts.next().value.lower()
+        right = parse_term(ts)
+        left = {"op":op,"left":left,"right":right}
+    return left
+
+def parse_term(ts: TokenStream):
+    if ts.peek() and ts.peek().value.upper() == "NOT":
+        ts.next()
+        return {"op":"not","arg":parse_factor(ts)}
+    return parse_factor(ts)
+
+def parse_factor(ts: TokenStream):
+    if ts.peek() and ts.peek().type == "LPAREN":
+        ts.next()
+        inner = parse_expr(ts)
+        ts.expect("RPAREN")
+        return inner
+
+    if ts.peek() and ts.peek().value.upper() == "EXISTS":
+        ts.next()
+        return {"op":"exists","field":parse_field(ts)}
+
+    field = parse_field(ts)
+    op = ts.expect("OP","KW").value.upper()
+
+    if op not in ("=","!=","<","<=",">",">=","CONTAINS"):
+        raise ParseError(f"Invalid operator {op}")
+
+    lit = ts.next()
+    if lit.type == "STRING":
+        val = lit.value.strip('"')
+    elif lit.type == "NUMBER":
+        val = float(lit.value) if "." in lit.value else int(lit.value)
+    else:
+        lw = lit.value.lower()
+        if lw == "true": val = True
+        elif lw == "false": val = False
+        elif lw == "null": val = None
+        else: val = lit.value
+
+    return {"op":"cmp","field":field,"cmp":op,"value":val}
