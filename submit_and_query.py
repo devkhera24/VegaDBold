@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+"""git push
 submit_and_query.py - Interactive document submission with structured JSON output
 """
 import sys

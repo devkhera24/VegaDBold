@@ -41,7 +41,8 @@ lmdb_store = LMDBMetaStore(path=os.environ.get("LMDB_PATH", "data/lmdb_meta"))
 try:
     qdrant_db = QdrantDB(
         collection=os.environ.get("QDRANT_COLLECTION", "docs_chunks"),
-        vector_size=384
+        vector_size=384,
+        path=os.environ.get("QDRANT_PATH", "data/qdrant_db")
     )
     QDRANT_AVAILABLE = True
 except Exception as e:

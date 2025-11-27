@@ -179,9 +179,9 @@ class QueryExecutor:
 
         # perform vector search
         try:
-            search_res = self.qdrant.search(collection_name=os.environ.get("QDRANT_COLLECTION", "docs_chunks"), query_vector=query_vector, limit=k)
+            search_res = self.qdrant.query_points(collection_name=os.environ.get("QDRANT_COLLECTION", "docs_chunks"), query=query_vector, limit=k).points
         except Exception as e:
-            logger.error("qdrant.search failed: %s", e)
+            logger.error("qdrant.query_points failed: %s", e)
             return {"results": [], "error": str(e)}
 
         # post-process results: apply filters with schema-aware casting
@@ -319,4 +319,3 @@ def make_executor(lmdb_store=None, graph=None):
             logger.warning("Failed to init Qdrant client in factory: %s", e)
             qdrant_client = None
     return QueryExecutor(lmdb_store=lmdb_store, graph=graph, qdrant_client=qdrant_client)
-  

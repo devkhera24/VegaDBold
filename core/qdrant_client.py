@@ -7,9 +7,17 @@ class QdrantDB:
         self,
         collection: str = "default_collection",
         vector_size: int = 384,
+        path: str = "data/qdrant_db",
+        host: str = None,
+        port: int = None,
     ):
-        # In-memory Qdrant (portable, no Docker)
-        self.client = QdrantClient(path=":memory:")
+        # Initialize Qdrant Client
+        # If host is provided, use server mode. Otherwise use local persistent mode.
+        if host:
+            self.client = QdrantClient(host=host, port=port)
+        else:
+            # Local persistent storage
+            self.client = QdrantClient(path=path)
 
         self.collection = collection
         self.vector_size = vector_size
@@ -31,12 +39,12 @@ class QdrantDB:
         self.client.upsert(collection_name=self.collection, points=[point])
 
     def search_vectors(self, vector: List[float], top_k: int = 5) -> List[Dict[str, float]]:
-        hits = self.client.search(
+        response = self.client.query_points(
             collection_name=self.collection,
-            query_vector=vector,
+            query=vector,
             limit=top_k
         )
-        return [{"vector_id": h.id, "score": float(h.score)} for h in hits]
+        return [{"vector_id": h.id, "score": float(h.score)} for h in response.points]
 
     def delete_vector(self, vector_id: int) -> None:
         """
@@ -44,5 +52,5 @@ class QdrantDB:
         """
         self.client.delete(
             collection_name=self.collection,
-            points_selector={"points": [vector_id]}
+            points_selector=[vector_id]
         )
